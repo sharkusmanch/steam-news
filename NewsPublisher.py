@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 def genRSSFeed(rssitems):
     pdate = datetime.now(timezone.utc)
-    lbdate = rssitems[0].pubDate
+    lbdate = rssitems[0].pubDate if rssitems else pdate
     return PyRSS2Gen.RSS2(
         title='Steam Game News',
         link='http://store.steampowered.com/news/?feed=mygames',

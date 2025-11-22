@@ -5,11 +5,14 @@
 # http://www.getoffmalawn.com/blog/rss-feeds-for-steam-games
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
 import json
 import logging
+import os
 import subprocess
 import sys
+import threading
 import time
 from urllib.request import urlopen
 from urllib.error import HTTPError
@@ -35,17 +38,95 @@ STEAM_APPIDS = {753: 'Steam',
         613220: 'Steam 360 Video Player'}
 
 
-def seed_database(idOrVanity, db: NewsDatabase):
+def seed_database(idOrVanity, db: NewsDatabase, api_key=None):
+    """Seed database with games from a Steam profile.
+    
+    Args:
+        idOrVanity: Steam ID (64-bit) or vanity URL name
+        db: NewsDatabase instance
+        api_key: Steam Web API key (optional, will check env var STEAM_API_KEY)
+    """
+    if api_key is None:
+        api_key = os.environ.get('STEAM_API_KEY')
+    
+    # Convert vanity URL to Steam ID if needed
     try:
-        sid = int(idOrVanity)
-        url = 'https://steamcommunity.com/profiles/{}/games?xml=1'.format(sid)
-    except ValueError:  # it's probably a vanity str
-        url = 'https://steamcommunity.com/id/{}/games?xml=1'.format(idOrVanity)
-
-    newsids = getAppIDsFromURL(url)
+        steamid = int(idOrVanity)
+    except ValueError:
+        # It's a vanity URL, need to resolve it
+        if not api_key:
+            logger.error('Steam API key required to resolve vanity URLs. Set STEAM_API_KEY environment variable.')
+            sys.exit(1)
+        steamid = resolveVanityURL(idOrVanity, api_key)
+        if not steamid:
+            logger.error('Could not resolve vanity URL: %s', idOrVanity)
+            sys.exit(1)
+    
+    if api_key:
+        newsids = getAppIDsFromAPI(steamid, api_key)
+    else:
+        # Fall back to XML method (requires public profile)
+        url = 'https://steamcommunity.com/profiles/{}/games?xml=1'.format(steamid)
+        newsids = getAppIDsFromURL(url)
+    
     #Also add the hardcoded ones...
     newsids.update(STEAM_APPIDS)
     db.add_games(newsids)
+
+
+def resolveVanityURL(vanity_url, api_key):
+    """Resolve a Steam vanity URL to a Steam ID using the API."""
+    url = 'https://api.steampowered.com/ISteamUser/ResolveVanityURL/v0001/?key={}&vanityurl={}'.format(
+        api_key, vanity_url)
+    try:
+        response = urlopen(url)
+        data = json.loads(response.read().decode('utf-8'))
+        if data['response']['success'] == 1:
+            logger.info('Resolved vanity URL "%s" to Steam ID %s', vanity_url, data['response']['steamid'])
+            return int(data['response']['steamid'])
+        else:
+            return None
+    except Exception as e:
+        logger.error('Error resolving vanity URL: %s', e)
+        return None
+
+
+def getAppIDsFromAPI(steamid, api_key):
+    """Get owned games using Steam Web API.
+    
+    Args:
+        steamid: 64-bit Steam ID
+        api_key: Steam Web API key
+    
+    Returns:
+        dict: {appid: game_name, ...}
+    """
+    url = 'https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key={}&steamid={}&include_appinfo=1&format=json'.format(
+        api_key, steamid)
+    logger.info('Fetching games from Steam API for Steam ID %s...', steamid)
+    
+    try:
+        response = urlopen(url)
+        data = json.loads(response.read().decode('utf-8'))
+        
+        if 'response' not in data or 'games' not in data['response']:
+            logger.error('No games found. The profile may be private or the Steam ID may be invalid.')
+            return {}
+        
+        games = {}
+        for game in data['response']['games']:
+            appid = game['appid']
+            name = game.get('name', 'Unknown Game')
+            games[appid] = name
+        
+        logger.info('Found %d games.', len(games))
+        return games
+    except HTTPError as e:
+        logger.error('HTTP Error fetching games: %s %s', e.code, e.reason)
+        return {}
+    except Exception as e:
+        logger.error('Error fetching games from API: %s', e)
+        return {}
 
 
 def getAppIDsFromURL(url):
@@ -54,18 +135,32 @@ def getAppIDsFromURL(url):
     i.e. parses unofficial XML API of a Steam user's game list.
     Note that the profile in question needs to be public for this to work!"""
     logger.info('Parsing XML from %s...', url)
-    xmlstr = urlopen(url).read().decode('utf-8')
-    dom = xml.dom.minidom.parseString(xmlstr)
-    gameEls = dom.getElementsByTagName('game')
+    try:
+        xmlstr = urlopen(url).read().decode('utf-8')
+        
+        # Check if we got redirected to a login page
+        if 'login' in xmlstr.lower() or '<html' in xmlstr.lower():
+            logger.error('Profile is private or requires login. Please make your game details public or use --api-key.')
+            return {}
+        
+        dom = xml.dom.minidom.parseString(xmlstr)
+        gameEls = dom.getElementsByTagName('game')
 
-    games = {}
-    for ge in gameEls:
-        appid = int(ge.getElementsByTagName('appID')[0].firstChild.data)
-        name = ge.getElementsByTagName('name')[0].firstChild.data
-        games[appid] = name
+        games = {}
+        for ge in gameEls:
+            appid = int(ge.getElementsByTagName('appID')[0].firstChild.data)
+            name = ge.getElementsByTagName('name')[0].firstChild.data
+            games[appid] = name
 
-    logger.info('Found %d games.', len(games))
-    return games
+        logger.info('Found %d games.', len(games))
+        return games
+    except xml.parsers.expat.ExpatError as e:
+        logger.error('XML parsing error: %s. Profile may be private or invalid.', e)
+        logger.error('Please make your game details public or use --api-key option with STEAM_API_KEY environment variable.')
+        return {}
+    except Exception as e:
+        logger.error('Error fetching games from profile: %s', e)
+        return {}
 
 # Date/time manipulation
 
@@ -128,31 +223,84 @@ def saveRecentNews(news: dict, db: NewsDatabase):
     return current_entries
 
 
-def getAllRecentNews(newsids: dict, db: NewsDatabase):
-    """Given a dict of appids to names, store all "recent" items, respecting the cache"""
+def getAllRecentNews(newsids: dict, db: NewsDatabase, max_workers=10):
+    """Given a dict of appids to names, store all "recent" items, respecting the cache.
+    
+    Args:
+        newsids: dict of {appid: game_name}
+        db: NewsDatabase instance
+        max_workers: Maximum number of concurrent requests (default: 10)
+    """
     total_current = 0
     cachehits = 0
     newhits = 0
     fails = 0
+    
+    # Thread-safe counter and database access lock
+    counter_lock = threading.Lock()
+    db_lock = threading.Lock()
+    
+    def fetch_news_only(aid, name):
+        """Fetch news for a single app ID (network request only)."""
+        try:
+            news = getNewsForAppID(aid)
+            return (aid, name, news, None)
+        except Exception as e:
+            return (aid, name, None, str(e))
+    
+    # First, check cache and separate cached vs. to-fetch
+    to_fetch = []
     for aid, name in newsids.items():
         if db.is_news_cached(aid):
             logger.info('Cache for %d: %s still valid!', aid, name)
             cachehits += 1
         else:
-            news = getNewsForAppID(aid)
-            if 'appnews' in news: # success
-                cur_entries = saveRecentNews(news, db)
-                newhits += 1
-                if cur_entries:
-                    logger.info('Fetched %d: %s OK; %d current items', aid, name, cur_entries)
-                    total_current += cur_entries
-                else:
-                    logger.info('Fetched %d: %s OK; nothing current', aid, name)
-                time.sleep(0.25)
-            else:
-                fails += 1
-                logger.error('%d: %s fetch error: %s', aid, name, news['error'])
-                time.sleep(1)
+            to_fetch.append((aid, name))
+    
+    if to_fetch:
+        logger.info('Fetching news for %d games concurrently (max %d workers)...', 
+                   len(to_fetch), max_workers)
+        
+        # Use ThreadPoolExecutor for concurrent fetching (network I/O only)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all fetch tasks
+            future_to_game = {
+                executor.submit(fetch_news_only, aid, name): (aid, name)
+                for aid, name in to_fetch
+            }
+            
+            # Process results as they complete
+            for future in as_completed(future_to_game):
+                aid, name = future_to_game[future]
+                try:
+                    aid, name, news, error = future.result()
+                    
+                    if error:
+                        with counter_lock:
+                            fails += 1
+                        logger.error('%d: %s exception: %s', aid, name, error)
+                    elif news and 'appnews' in news:
+                        # Save to database using the main thread's connection (with lock)
+                        with db_lock:
+                            cur_entries = saveRecentNews(news, db)
+                        
+                        with counter_lock:
+                            newhits += 1
+                            total_current += cur_entries
+                        
+                        if cur_entries:
+                            logger.info('Fetched %d: %s OK; %d current items', aid, name, cur_entries)
+                        else:
+                            logger.info('Fetched %d: %s OK; nothing current', aid, name)
+                    else:
+                        with counter_lock:
+                            fails += 1
+                        logger.error('%d: %s fetch error: %s', aid, name, news.get('error', 'Unknown error'))
+                        
+                except Exception as e:
+                    with counter_lock:
+                        fails += 1
+                    logger.error('Unexpected error processing %d: %s - %s', aid, name, str(e))
 
     logger.info('Run complete. %d cached, %d fetched, %d failed; %d current news items',
             cachehits, newhits, fails, total_current)
@@ -206,9 +354,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--first-run', action='store_true')
     parser.add_argument('-a', '--add-profile-games', metavar='Steam ID|Vanity url')
+    parser.add_argument('--api-key', metavar='KEY', help='Steam Web API key (or set STEAM_API_KEY env var)')
     parser.add_argument('-f', '--fetch', action='store_true')
     parser.add_argument('-p', '--publish', metavar='XML output path')
     parser.add_argument('-g', '--edit-games-like', metavar='partial title')
+    parser.add_argument('-w', '--workers', type=int, default=10, metavar='N',
+                       help='Number of concurrent workers for fetching (default: 10)')
     parser.add_argument('-v', '--verbose', action='store_true')
     #TODO maybe arg for DB path...?
     args = parser.parse_args()
@@ -223,14 +374,14 @@ def main():
             db.first_run()
 
         if args.add_profile_games:
-            seed_database(args.add_profile_games, db)
+            seed_database(args.add_profile_games, db, api_key=args.api_key)
 
         if args.edit_games_like:
             edit_fetch_games(args.edit_games_like, db)
         else: #editing is mutually exclusive w/ fetch & publish
             if args.fetch:
                 newsids = db.get_fetch_games()
-                getAllRecentNews(newsids, db)
+                getAllRecentNews(newsids, db, max_workers=args.workers)
 
             if args.publish:
                 publish(db, args.publish)
