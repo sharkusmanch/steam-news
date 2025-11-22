@@ -1,0 +1,41 @@
+# Docker ignore file for Steam News Feed Generator
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Database and output files
+*.db
+*.xml
+*.log
+
+# Virtual environments
+venv/
+env/
+bin/
+lib/
+lib64/
+pyvenv.cfg
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation
+README.md
+LICENCE
