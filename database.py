@@ -19,8 +19,20 @@ class NewsDatabase:
             # Ensure the directory exists
             db_dir = os.path.dirname(self.path)
             if db_dir and not os.path.exists(db_dir):
-                os.makedirs(db_dir, exist_ok=True)
-                logger.debug('Created directory: %s', db_dir)
+                try:
+                    os.makedirs(db_dir, exist_ok=True)
+                    logger.debug('Created directory: %s', db_dir)
+                except OSError as e:
+                    logger.error('Failed to create directory %s: %s', db_dir, e)
+                    raise
+            elif db_dir:
+                logger.debug('Directory already exists: %s', db_dir)
+            
+            # Check if directory is writable
+            if db_dir and not os.access(db_dir, os.W_OK):
+                logger.error('Directory %s is not writable', db_dir)
+                raise PermissionError(f'Directory {db_dir} is not writable')
+            
             self.db = sqlite3.connect(self.path)
             self.db.row_factory = sqlite3.Row
             self.db.execute('PRAGMA foreign_keys = ON')
