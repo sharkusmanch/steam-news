@@ -36,6 +36,9 @@ class NewsDatabase:
             self.db = sqlite3.connect(self.path)
             self.db.row_factory = sqlite3.Row
             self.db.execute('PRAGMA foreign_keys = ON')
+            
+            # Run migrations if needed
+            self._migrate_database()
 
     def close(self, optimize=True):
         if self.db:
@@ -96,6 +99,45 @@ CREATE UNIQUE INDEX NewsTitleIdx ON NewsItems(title);''')
         # from NewsSources could lead to loss of data useful for publishing...
         self.db.commit()
         logger.info('Created DB tables!')
+
+    def _migrate_database(self):
+        """Apply database migrations for schema updates."""
+        try:
+            # Check if Games table exists
+            c = self.db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='Games'")
+            if not c.fetchone():
+                # No tables yet, nothing to migrate
+                return
+            
+            # Migration 1: Add last_played column to Games table if it doesn't exist
+            c = self.db.execute("PRAGMA table_info(Games)")
+            columns = [row[1] for row in c.fetchall()]
+            if 'last_played' not in columns:
+                logger.info('Migrating database: adding last_played column to Games table...')
+                self.db.execute('ALTER TABLE Games ADD COLUMN last_played INTEGER DEFAULT 0')
+                self.db.commit()
+                logger.info('Migration complete: last_played column added.')
+            
+            # Migration 2: Add unique index on NewsItems.title if it doesn't exist
+            c = self.db.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='NewsTitleIdx'")
+            if not c.fetchone():
+                logger.info('Migrating database: adding unique index on NewsItems.title...')
+                # First, need to check for and handle any existing duplicate titles
+                self.db.execute('''
+                    DELETE FROM NewsItems
+                    WHERE rowid NOT IN (
+                        SELECT MIN(rowid)
+                        FROM NewsItems
+                        GROUP BY title
+                    )
+                ''')
+                self.db.execute('CREATE UNIQUE INDEX NewsTitleIdx ON NewsItems(title)')
+                self.db.commit()
+                logger.info('Migration complete: NewsTitleIdx index added.')
+                
+        except Exception as e:
+            logger.error('Error during database migration: %s', e)
+            raise
 
     def add_games(self, games: dict, timestamps: dict = None):
         """Add or update games in the database.
