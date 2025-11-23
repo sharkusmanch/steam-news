@@ -30,7 +30,7 @@ RUN mkdir -p /data
 VOLUME ["/data"]
 
 # Set environment variable for database location
-ENV DATABASE_PATH=/data/steam_news.db
+ENV STEAM_NEWS_DATABASE_PATH=/data/SteamNews.db
 
 # Default command - show help
 CMD ["python", "SteamNews.py", "--help"]

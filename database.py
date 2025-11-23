@@ -1,12 +1,15 @@
 import sqlite3
 import logging
+import os
 import time
 
 logger = logging.getLogger(__name__)
 
 class NewsDatabase:
     def __init__(self, path=None, retention_days=14):
-        self.path = path or 'SteamNews.db'
+        if path is None:
+            path = os.environ.get('STEAM_NEWS_DATABASE_PATH', 'SteamNews.db')
+        self.path = path
         self.retention_days = retention_days
         self.db = None
 

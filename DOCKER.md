@@ -20,13 +20,13 @@ The script now supports using the Steam Web API, which works with private profil
 ```bash
 # Using Steam ID (64-bit numerical ID)
 docker run -v $(pwd)/data:/data \
-  -e STEAM_API_KEY=YOUR_API_KEY_HERE \
-  steam-news python SteamNews.py --first-run --add-profile-games YOUR_STEAM_ID --api-key $STEAM_API_KEY
+  -e STEAM_NEWS_API_KEY=YOUR_API_KEY_HERE \
+  steam-news python SteamNews.py --first-run --add-profile-games YOUR_STEAM_ID --api-key $STEAM_NEWS_API_KEY
 
 # OR using vanity URL (username)
 docker run -v $(pwd)/data:/data \
-  -e STEAM_API_KEY=YOUR_API_KEY_HERE \
-  steam-news python SteamNews.py --first-run --add-profile-games sharkusmanchez --api-key $STEAM_API_KEY
+  -e STEAM_NEWS_API_KEY=YOUR_API_KEY_HERE \
+  steam-news python SteamNews.py --first-run --add-profile-games sharkusmanchez --api-key $STEAM_NEWS_API_KEY
 ```
 
 ### Fetch News and Generate RSS
@@ -65,13 +65,13 @@ services:
     volumes:
       - ./data:/data
     environment:
-      - STEAM_API_KEY=${STEAM_API_KEY}
+      - STEAM_NEWS_API_KEY=${STEAM_NEWS_API_KEY}
     command: python SteamNews.py --fetch --publish /data/steam_news.xml
 ```
 
 Then create a `.env` file:
 ```
-STEAM_API_KEY=your_api_key_here
+STEAM_NEWS_API_KEY=your_api_key_here
 ```
 
 Run with:
@@ -90,8 +90,11 @@ You can schedule regular updates using cron or a scheduler:
 
 ## Environment Variables
 
-- `STEAM_API_KEY`: Your Steam Web API key (optional but recommended)
-- `DATABASE_PATH`: Path to SQLite database (default: `/data/steam_news.db`)
+- `STEAM_NEWS_API_KEY`: Your Steam Web API key (optional but recommended)
+- `STEAM_NEWS_DATABASE_PATH`: Path to SQLite database (default: `SteamNews.db`)
+- `STEAM_NEWS_RETENTION_DAYS`: Number of days to retain news items (default: 14)
+- `STEAM_NEWS_WORKERS`: Number of concurrent workers for fetching (default: 10)
+- `STEAM_NEWS_RECENTLY_PLAYED_COUNT`: Limit recently played games to last N games
 
 ## Volumes
 

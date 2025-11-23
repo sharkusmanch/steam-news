@@ -21,6 +21,7 @@ The application can be configured via command-line flags or environment variable
 | Configuration | CLI Flag | Environment Variable | Default | Description |
 |--------------|----------|---------------------|---------|-------------|
 | Steam API Key | `--api-key KEY` | `STEAM_NEWS_API_KEY` | None | Steam Web API key for resolving vanity URLs and fetching owned games |
+| Database Path | N/A | `STEAM_NEWS_DATABASE_PATH` | `SteamNews.db` | Path to SQLite database file |
 | Retention Days | `-r DAYS`, `--retention-days DAYS` | `STEAM_NEWS_RETENTION_DAYS` | 14 | Number of days to retain news items. Older items are ignored when fetching and pruned from the database |
 | Workers | `-w N`, `--workers N` | `STEAM_NEWS_WORKERS` | 10 | Number of concurrent workers for fetching news |
 | Recently Played Count | `--recently-played-count N` | `STEAM_NEWS_RECENTLY_PLAYED_COUNT` | None | Limit recently played games to last N games played (only applies with `--recently-played`) |
