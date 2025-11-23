@@ -118,7 +118,7 @@ def getAppIDsFromAPI(steamid, api_key):
     Returns:
         dict: {appid: game_name, ...}
     """
-    url = 'https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key={}&steamid={}&include_appinfo=1&format=json'.format(
+    url = 'https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key={}&steamid={}&include_appinfo=1&include_played_free_games=1&format=json'.format(
         api_key, steamid)
     logger.info('Fetching games from Steam API for Steam ID %s...', steamid)
     
@@ -147,38 +147,49 @@ def getAppIDsFromAPI(steamid, api_key):
 
 
 def getRecentlyPlayedGamesFromAPI(steamid, api_key, count=None):
-    """Get recently played games using Steam Web API.
+    """Get recently played games using last played timestamp from owned games.
     
     Args:
         steamid: 64-bit Steam ID
         api_key: Steam Web API key
-        count: Optional limit on number of games to return (None = all from last 2 weeks)
+        count: Optional limit on number of games to return (None = all games with playtime)
     
     Returns:
         dict: {appid: game_name, ...}
     """
-    url = 'https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v0001/?key={}&steamid={}&format=json'.format(
+    url = 'https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key={}&steamid={}&include_appinfo=1&include_played_free_games=1&format=json'.format(
         api_key, steamid)
-    if count:
-        url += '&count={}'.format(count)
     
-    count_msg = 'last {} games'.format(count) if count else 'games from last 2 weeks'
+    count_msg = 'last {} played games'.format(count) if count else 'all played games'
     logger.info('Fetching recently played games (%s) from Steam API for Steam ID %s...', count_msg, steamid)
     
     try:
         response = urlopen(url)
         data = json.loads(response.read().decode('utf-8'))
         
-        if 'response' not in data:
+        if 'response' not in data or 'games' not in data['response']:
             logger.error('No games found. The profile may be private or the Steam ID may be invalid.')
             return {}
         
-        if 'games' not in data['response'] or not data['response']['games']:
+        # Filter games that have been played (have rtime_last_played)
+        played_games = [
+            game for game in data['response']['games']
+            if game.get('rtime_last_played', 0) > 0
+        ]
+        
+        if not played_games:
             logger.warning('No recently played games found.')
             return {}
         
+        # Sort by last played time (most recent first)
+        played_games.sort(key=lambda x: x.get('rtime_last_played', 0), reverse=True)
+        
+        # Limit to count if specified
+        if count:
+            played_games = played_games[:count]
+        
         games = {}
-        for game in data['response']['games']:
+        for game in played_games:
             appid = game['appid']
             name = game.get('name', 'Unknown Game')
             games[appid] = name

@@ -48,12 +48,12 @@ You can choose between two methods for determining which games to fetch news for
 
 2. **Recently Played Games**: Fetches news only for recently played games (requires Steam API key)
    
-   - **All games from last 2 weeks** (default when using `--recently-played`):
+   - **All games you've ever played** (default when using `--recently-played`):
      ```bash
      ./SteamNews.py --add-profile-games <Steam ID> --recently-played --api-key <YOUR_KEY>
      ```
    
-   - **Last N games played** (configurable count):
+   - **Last N games played** (configurable count, sorted by last played timestamp):
      ```bash
      # Last 5 games played
      ./SteamNews.py --add-profile-games <Steam ID> --recently-played --recently-played-count 5
