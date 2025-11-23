@@ -96,6 +96,15 @@ the 10 most recent news items, as long as they're within the retention period
 After fetching, old news items (older than the retention period) are automatically
 pruned from the database to keep it clean and manageable.
 
+You can also manually prune old items without fetching using `--prune`:
+```bash
+# Prune items older than default retention period (14 days)
+./SteamNews.py --prune
+
+# Prune items older than custom retention period
+./SteamNews.py --prune --retention-days 7
+```
+
 Finally, you can run `-p`/`--publish` followed by a path to an XML file to output
 to convert the newest news items into an RSS feed.
 
