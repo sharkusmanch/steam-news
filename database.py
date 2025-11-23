@@ -87,7 +87,8 @@ CREATE TABLE NewsSources(
         REFERENCES Games(appid) ON DELETE CASCADE ON UPDATE CASCADE,
     PRIMARY KEY(gid, appid));
 CREATE INDEX NewsDateIdx ON NewsItems(date);
-CREATE INDEX NewsSourceAppIDIdx ON NewsSources(appid);''')
+CREATE INDEX NewsSourceAppIDIdx ON NewsSources(appid);
+CREATE UNIQUE INDEX NewsTitleIdx ON NewsItems(title);''')
 
         #having news item appid foreign key on games can break,
         # since the news appid might not be the one we fetched against
@@ -193,14 +194,21 @@ CREATE INDEX NewsSourceAppIDIdx ON NewsSources(appid);''')
     def insert_news_item(self, ned: dict):
         #TODO maybe convert the dict to a namedtuple...?
         with self.db as db:
+            # Try to insert the news item
+            # If title already exists, this will fail silently due to UNIQUE constraint
             db.execute('''INSERT OR IGNORE INTO NewsItems
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
                 (ned['gid'], ned['title'], ned['url'], ned['is_external_url'],
                     ned['author'], ned['contents'], ned['feedlabel'], ned['date'],
                     ned['feedname'], ned['feed_type'], ned['appid']))
 
+            # Find the gid for this title (might be different if title already existed)
+            c = db.execute('SELECT gid FROM NewsItems WHERE title = ?', (ned['title'],))
+            existing_gid = c.fetchone()[0]
+            
+            # Link this source appid to the gid (handles both new and existing articles)
             db.execute('INSERT OR IGNORE INTO NewsSources VALUES (?, ?)',
-                    (ned['gid'], ned['realappid']))
+                    (existing_gid, ned['realappid']))
 
     def get_news_rows(self):
         #TODO generator shenanigans instead of fetchall()?
