@@ -14,6 +14,20 @@ with roughly the same content as the `mygames` link above.
 A SQLite database is used to store the list of AppIDs to fetch news for,
 as well as a cache of all the news items retrieved.
 
+## Configuration
+
+The application can be configured via command-line flags or environment variables. Environment variables are prefixed with `STEAM_NEWS_`.
+
+| Configuration | CLI Flag | Environment Variable | Default | Description |
+|--------------|----------|---------------------|---------|-------------|
+| Steam API Key | `--api-key KEY` | `STEAM_NEWS_API_KEY` | None | Steam Web API key for resolving vanity URLs and fetching owned games |
+| Retention Days | `-r DAYS`, `--retention-days DAYS` | `STEAM_NEWS_RETENTION_DAYS` | 14 | Number of days to retain news items. Older items are ignored when fetching and pruned from the database |
+| Workers | `-w N`, `--workers N` | `STEAM_NEWS_WORKERS` | 10 | Number of concurrent workers for fetching news |
+| Recently Played Count | `--recently-played-count N` | `STEAM_NEWS_RECENTLY_PLAYED_COUNT` | None | Limit recently played games to last N games played (only applies with `--recently-played`) |
+| Verbose Logging | `-v`, `--verbose` | N/A | False | Enable debug-level logging output |
+
+**Note:** CLI flags take precedence over environment variables when both are provided.
+
 ## Usage
 `SteamNews.py` is the main script. Run it with `--help` to get the command-line
 arguments it works with.
@@ -21,6 +35,48 @@ arguments it works with.
 On first install, run
 `./SteamNews.py --first-run --add-profile-games <Steam ID/vanity URL ending>`
 to create the database & seed it with a games list from a **public** Steam profile.
+
+### News Source Methods
+
+You can choose between two methods for determining which games to fetch news for:
+
+1. **All Owned Games** (default): Fetches news for all games in your Steam library
+   ```bash
+   ./SteamNews.py --add-profile-games <Steam ID/vanity URL>
+   ```
+
+2. **Recently Played Games**: Fetches news only for recently played games (requires Steam API key)
+   
+   - **All games from last 2 weeks** (default when using `--recently-played`):
+     ```bash
+     ./SteamNews.py --add-profile-games <Steam ID> --recently-played --api-key <YOUR_KEY>
+     ```
+   
+   - **Last N games played** (configurable count):
+     ```bash
+     # Last 5 games played
+     ./SteamNews.py --add-profile-games <Steam ID> --recently-played --recently-played-count 5
+     
+     # Or with environment variables:
+     export STEAM_NEWS_API_KEY=<YOUR_KEY>
+     export STEAM_NEWS_RECENTLY_PLAYED_COUNT=10
+     ./SteamNews.py --add-profile-games <Steam ID> --recently-played
+     ```
+
+#### Switching Between Methods
+
+By default, adding games is **additive** - new games are added to the existing list. If you want to switch from "all games" to "recently played" (or vice versa), use the `--replace` flag to disable all existing games first:
+
+```bash
+# Switch from all games to recently played (last 10 games)
+./SteamNews.py --add-profile-games <Steam ID> --recently-played --recently-played-count 10 --replace
+
+# Switch back to all games
+./SteamNews.py --add-profile-games <Steam ID> --replace
+```
+
+Without `--replace`, games are simply added to the existing list, which is useful for combining games from multiple profiles.
+
 You can re-run with `-a`/`--add-profile-games` to combine or update from other
 profiles, if you like.
 
@@ -34,14 +90,11 @@ Once you're happy with the games list, run with `-f`/`--fetch` to pull
 news from Steam's API. The AppIDs it fetches are based on the games pulled from
 the profile(s) in the above steps, minus those disabled by "editing".
 Fetching respects the `Expires` headers sent by the API and only adds
-the 10 most recent news items, as long as they're less than 30 days old.
+the 10 most recent news items, as long as they're within the retention period
+(default 14 days, configurable via `--retention-days` or `STEAM_NEWS_RETENTION_DAYS`).
 
-There is currently no mechanism to clean out older news items automatically,
-but the disk space usage of the database has been small enough not to bother.
-I've been using this program myself since March 2018 (according to my oldest
-news item).  As of November 2022, with a library of about 300 games,
-I've accumulated about 3700 news items... and the database only takes up 11 MB.
-Run `VACUUM;` in SQLite once in a while and you'll be fine.
+After fetching, old news items (older than the retention period) are automatically
+pruned from the database to keep it clean and manageable.
 
 Finally, you can run `-p`/`--publish` followed by a path to an XML file to output
 to convert the newest news items into an RSS feed.
@@ -49,10 +102,6 @@ to convert the newest news items into an RSS feed.
 `updateAndPublish.sh` is a sample Bash script to fetch, publish,
 and copy the result where it will be published.
 Note that you can combine `--fetch` and `--publish` to do both in the same run!
-
-I previously used GitHub Pages on this repository to publish the feed--
-this is now out of date.  I'll leave it up for historical reasons,
-but I don't intend to update it.
 
 ## Dependencies
 This is a Python 3 project. The only external libraries in use are

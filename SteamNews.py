@@ -38,16 +38,19 @@ STEAM_APPIDS = {753: 'Steam',
         613220: 'Steam 360 Video Player'}
 
 
-def seed_database(idOrVanity, db: NewsDatabase, api_key=None):
+def seed_database(idOrVanity, db: NewsDatabase, api_key=None, recently_played=False, recently_played_count=None, replace=False):
     """Seed database with games from a Steam profile.
     
     Args:
         idOrVanity: Steam ID (64-bit) or vanity URL name
         db: NewsDatabase instance
-        api_key: Steam Web API key (optional, will check env var STEAM_API_KEY)
+        api_key: Steam Web API key (optional, will check env var STEAM_NEWS_API_KEY)
+        recently_played: If True, only add recently played games; otherwise all owned games
+        recently_played_count: Number of recently played games to fetch (None = all from last 2 weeks)
+        replace: If True, disable all existing games before adding new ones
     """
     if api_key is None:
-        api_key = os.environ.get('STEAM_API_KEY')
+        api_key = os.environ.get('STEAM_NEWS_API_KEY')
     
     # Convert vanity URL to Steam ID if needed
     try:
@@ -55,7 +58,7 @@ def seed_database(idOrVanity, db: NewsDatabase, api_key=None):
     except ValueError:
         # It's a vanity URL, need to resolve it
         if not api_key:
-            logger.error('Steam API key required to resolve vanity URLs. Set STEAM_API_KEY environment variable.')
+            logger.error('Steam API key required to resolve vanity URLs. Set STEAM_NEWS_API_KEY environment variable.')
             sys.exit(1)
         steamid = resolveVanityURL(idOrVanity, api_key)
         if not steamid:
@@ -63,14 +66,28 @@ def seed_database(idOrVanity, db: NewsDatabase, api_key=None):
             sys.exit(1)
     
     if api_key:
-        newsids = getAppIDsFromAPI(steamid, api_key)
+        if recently_played:
+            newsids = getRecentlyPlayedGamesFromAPI(steamid, api_key, count=recently_played_count)
+        else:
+            newsids = getAppIDsFromAPI(steamid, api_key)
     else:
         # Fall back to XML method (requires public profile)
+        # Note: XML method doesn't support recently played, will get all games
+        if recently_played:
+            logger.warning('Recently played requires API key. Falling back to all games from XML.')
         url = 'https://steamcommunity.com/profiles/{}/games?xml=1'.format(steamid)
         newsids = getAppIDsFromURL(url)
     
     #Also add the hardcoded ones...
     newsids.update(STEAM_APPIDS)
+    
+    if replace:
+        # Disable all existing games before adding new ones
+        existing_ids = list(db.get_all_game_ids())
+        if existing_ids:
+            logger.info('Replace mode: disabling %d existing games before adding new ones.', len(existing_ids))
+            db.disable_fetching_ids(existing_ids)
+    
     db.add_games(newsids)
 
 
@@ -129,6 +146,53 @@ def getAppIDsFromAPI(steamid, api_key):
         return {}
 
 
+def getRecentlyPlayedGamesFromAPI(steamid, api_key, count=None):
+    """Get recently played games using Steam Web API.
+    
+    Args:
+        steamid: 64-bit Steam ID
+        api_key: Steam Web API key
+        count: Optional limit on number of games to return (None = all from last 2 weeks)
+    
+    Returns:
+        dict: {appid: game_name, ...}
+    """
+    url = 'https://api.steampowered.com/IPlayerService/GetRecentlyPlayedGames/v0001/?key={}&steamid={}&format=json'.format(
+        api_key, steamid)
+    if count:
+        url += '&count={}'.format(count)
+    
+    count_msg = 'last {} games'.format(count) if count else 'games from last 2 weeks'
+    logger.info('Fetching recently played games (%s) from Steam API for Steam ID %s...', count_msg, steamid)
+    
+    try:
+        response = urlopen(url)
+        data = json.loads(response.read().decode('utf-8'))
+        
+        if 'response' not in data:
+            logger.error('No games found. The profile may be private or the Steam ID may be invalid.')
+            return {}
+        
+        if 'games' not in data['response'] or not data['response']['games']:
+            logger.warning('No recently played games found.')
+            return {}
+        
+        games = {}
+        for game in data['response']['games']:
+            appid = game['appid']
+            name = game.get('name', 'Unknown Game')
+            games[appid] = name
+        
+        logger.info('Found %d recently played games.', len(games))
+        return games
+    except HTTPError as e:
+        logger.error('HTTP Error fetching recently played games: %s %s', e.code, e.reason)
+        return {}
+    except Exception as e:
+        logger.error('Error fetching recently played games from API: %s', e)
+        return {}
+
+
 def getAppIDsFromURL(url):
     """Given a steam profile url, produce a dict of
     appids to names of games owned (appids are strings)
@@ -156,7 +220,7 @@ def getAppIDsFromURL(url):
         return games
     except xml.parsers.expat.ExpatError as e:
         logger.error('XML parsing error: %s. Profile may be private or invalid.', e)
-        logger.error('Please make your game details public or use --api-key option with STEAM_API_KEY environment variable.')
+        logger.error('Please make your game details public or use --api-key option with STEAM_NEWS_API_KEY environment variable.')
         return {}
     except Exception as e:
         logger.error('Error fetching games from profile: %s', e)
@@ -203,21 +267,21 @@ def getNewsForAppID(appid):
         return {'error': '{} {}'.format(e.code, e.reason)}
 
 
-def isNewsOld(ned):
-    """Is this news item more than 30 days old?"""
+def isNewsOld(ned, retention_days=14):
+    """Is this news item older than retention_days?"""
     newsdt = datetime.fromtimestamp(ned['date'], timezone.utc)
-    thirtyago = datetime.now(timezone.utc) - timedelta(days=30)
-    return newsdt < thirtyago
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+    return newsdt < cutoff
 
 
-def saveRecentNews(news: dict, db: NewsDatabase):
+def saveRecentNews(news: dict, db: NewsDatabase, retention_days=14):
     """Given a single news dict from getNewsForAppID,
     save all "recent" news items to the DB"""
     db.update_expire_time(news['appnews']['appid'], news['expires'])
 
     current_entries = 0
     for ned in news['appnews']['newsitems']:
-        if not isNewsOld(ned):
+        if not isNewsOld(ned, retention_days):
             db.insert_news_item(ned)
             current_entries += 1
     return current_entries
@@ -282,7 +346,7 @@ def getAllRecentNews(newsids: dict, db: NewsDatabase, max_workers=10):
                     elif news and 'appnews' in news:
                         # Save to database using the main thread's connection (with lock)
                         with db_lock:
-                            cur_entries = saveRecentNews(news, db)
+                            cur_entries = saveRecentNews(news, db, retention_days=db.retention_days)
                         
                         with counter_lock:
                             newhits += 1
@@ -354,12 +418,22 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--first-run', action='store_true')
     parser.add_argument('-a', '--add-profile-games', metavar='Steam ID|Vanity url')
-    parser.add_argument('--api-key', metavar='KEY', help='Steam Web API key (or set STEAM_API_KEY env var)')
+    parser.add_argument('--recently-played', action='store_true',
+                       help='When adding profile games, only add recently played games (requires API key)')
+    parser.add_argument('--recently-played-count', type=int, metavar='N',
+                       help='Limit recently played games to last N games (default: all from last 2 weeks, or set STEAM_NEWS_RECENTLY_PLAYED_COUNT env var)')
+    parser.add_argument('--replace', action='store_true',
+                       help='Disable all existing games before adding new ones (useful when switching from all games to recently played)')
+    parser.add_argument('--api-key', metavar='KEY', help='Steam Web API key (or set STEAM_NEWS_API_KEY env var)')
     parser.add_argument('-f', '--fetch', action='store_true')
     parser.add_argument('-p', '--publish', metavar='XML output path')
+    parser.add_argument('--prune', action='store_true',
+                       help='Prune news items older than retention period from database')
     parser.add_argument('-g', '--edit-games-like', metavar='partial title')
-    parser.add_argument('-w', '--workers', type=int, default=10, metavar='N',
-                       help='Number of concurrent workers for fetching (default: 10)')
+    parser.add_argument('-w', '--workers', type=int, metavar='N',
+                       help='Number of concurrent workers for fetching (default: 10, or set STEAM_NEWS_WORKERS env var)')
+    parser.add_argument('-r', '--retention-days', type=int, metavar='DAYS',
+                       help='Number of days to retain news items (default: 14, or set STEAM_NEWS_RETENTION_DAYS env var)')
     parser.add_argument('-v', '--verbose', action='store_true')
     #TODO maybe arg for DB path...?
     args = parser.parse_args()
@@ -369,19 +443,44 @@ def main():
             format='%(asctime)s | %(name)s | %(levelname)s | %(message)s',
             level=lvl)
 
-    with NewsDatabase() as db:
+    # Get retention days from CLI arg, env var, or default
+    retention_days = args.retention_days
+    if retention_days is None:
+        retention_days = int(os.environ.get('STEAM_NEWS_RETENTION_DAYS', 14))
+
+    # Get workers from CLI arg, env var, or default
+    workers = args.workers
+    if workers is None:
+        workers = int(os.environ.get('STEAM_NEWS_WORKERS', 10))
+
+    # Get recently played count from CLI arg or env var
+    recently_played_count = args.recently_played_count
+    if recently_played_count is None and args.recently_played:
+        env_count = os.environ.get('STEAM_NEWS_RECENTLY_PLAYED_COUNT')
+        if env_count:
+            recently_played_count = int(env_count)
+
+    with NewsDatabase(retention_days=retention_days) as db:
         if args.first_run:
             db.first_run()
 
         if args.add_profile_games:
-            seed_database(args.add_profile_games, db, api_key=args.api_key)
+            seed_database(args.add_profile_games, db, api_key=args.api_key, 
+                        recently_played=args.recently_played,
+                        recently_played_count=recently_played_count,
+                        replace=args.replace)
 
         if args.edit_games_like:
             edit_fetch_games(args.edit_games_like, db)
         else: #editing is mutually exclusive w/ fetch & publish
             if args.fetch:
                 newsids = db.get_fetch_games()
-                getAllRecentNews(newsids, db, max_workers=args.workers)
+                getAllRecentNews(newsids, db, max_workers=workers)
+                # Prune old news items from database
+                db.prune_old_news()
+
+            if args.prune:
+                db.prune_old_news()
 
             if args.publish:
                 publish(db, args.publish)

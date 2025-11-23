@@ -5,8 +5,9 @@ import time
 logger = logging.getLogger(__name__)
 
 class NewsDatabase:
-    def __init__(self, path=None):
+    def __init__(self, path=None, retention_days=14):
         self.path = path or 'SteamNews.db'
+        self.retention_days = retention_days
         self.db = None
 
     def open(self):
@@ -107,6 +108,11 @@ CREATE INDEX NewsSourceAppIDIdx ON NewsSources(appid);''')
         c = self.db.execute('SELECT appid, name FROM Games WHERE shouldFetch != 0')
         return dict(c.fetchall())
 
+    def get_all_game_ids(self):
+        """Get all game IDs in the database."""
+        c = self.db.execute('SELECT appid FROM Games')
+        return [row[0] for row in c.fetchall()]
+
     def update_expire_time(self, appid, expires):
         with self.db as db:
             db.execute('INSERT OR REPLACE INTO ExpireTimes VALUES (?, ?)',
@@ -139,8 +145,8 @@ CREATE INDEX NewsSourceAppIDIdx ON NewsSources(appid);''')
         #sadly our sqlite3 version isn't new enough for unixepoch()
         # so we have to use strftime('%s') for sqlite to make a unix timestamp
         c = self.db.execute('''SELECT * FROM NewsItems
-            WHERE date >= strftime('%s', 'now', '-30 day')
-            ORDER BY date DESC''')
+            WHERE date >= strftime('%s', 'now', '-{} day')
+            ORDER BY date DESC'''.format(self.retention_days))
         return c.fetchall()
 
     def get_source_names_for_item(self, gid):
@@ -149,3 +155,18 @@ CREATE INDEX NewsSourceAppIDIdx ON NewsSources(appid);''')
             WHERE gid = ? ORDER BY appid''', (gid,))
         #fetchall gives a bunch of tuples, so we have to unpack them with a for loop...
         return list(x[0] for x in c.fetchall())
+
+    def prune_old_news(self):
+        """Remove news items older than retention_days from the database."""
+        with self.db as db:
+            cur = db.execute('''DELETE FROM NewsItems
+                WHERE date < strftime('%s', 'now', '-{} day')'''.format(self.retention_days))
+            deleted = cur.rowcount
+            if deleted > 0:
+                logger.info('Pruned %d old news items (older than %d days).', deleted, self.retention_days)
+                # Reclaim disk space and update statistics after deletion
+                logger.debug('Running VACUUM to reclaim disk space...')
+                db.execute('VACUUM')
+                logger.debug('Running ANALYZE to update query statistics...')
+                db.execute('ANALYZE')
+            return deleted
