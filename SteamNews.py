@@ -45,8 +45,8 @@ def seed_database(idOrVanity, db: NewsDatabase, api_key=None, recently_played=Fa
         idOrVanity: Steam ID (64-bit) or vanity URL name
         db: NewsDatabase instance
         api_key: Steam Web API key (optional, will check env var STEAM_NEWS_API_KEY)
-        recently_played: If True, only add recently played games; otherwise all owned games
-        recently_played_count: Number of recently played games to fetch (None = all from last 2 weeks)
+        recently_played: If True, enable only recently played games; otherwise enable all games
+        recently_played_count: Number of recently played games to enable (used with recently_played)
         replace: If True, disable all existing games before adding new ones
     """
     if api_key is None:
@@ -65,18 +65,17 @@ def seed_database(idOrVanity, db: NewsDatabase, api_key=None, recently_played=Fa
             logger.error('Could not resolve vanity URL: %s', idOrVanity)
             sys.exit(1)
     
+    # Always fetch ALL owned games with timestamps
     if api_key:
-        if recently_played:
-            newsids = getRecentlyPlayedGamesFromAPI(steamid, api_key, count=recently_played_count)
-        else:
-            newsids = getAppIDsFromAPI(steamid, api_key)
+        newsids, timestamps = getAllGamesWithTimestamps(steamid, api_key)
     else:
         # Fall back to XML method (requires public profile)
-        # Note: XML method doesn't support recently played, will get all games
+        # Note: XML method doesn't have timestamp data
         if recently_played:
-            logger.warning('Recently played requires API key. Falling back to all games from XML.')
+            logger.warning('Recently played mode requires API key for timestamp data. Falling back to all games from XML.')
         url = 'https://steamcommunity.com/profiles/{}/games?xml=1'.format(steamid)
         newsids = getAppIDsFromURL(url)
+        timestamps = {}
     
     #Also add the hardcoded ones...
     newsids.update(STEAM_APPIDS)
@@ -88,7 +87,29 @@ def seed_database(idOrVanity, db: NewsDatabase, api_key=None, recently_played=Fa
             logger.info('Replace mode: disabling %d existing games before adding new ones.', len(existing_ids))
             db.disable_fetching_ids(existing_ids)
     
-    db.add_games(newsids)
+    # Add/update all games with timestamps
+    db.add_games(newsids, timestamps)
+    
+    # If recently_played mode, enable only recently played games
+    if recently_played and timestamps:
+        # Get recently played game IDs
+        played_games = [(appid, ts) for appid, ts in timestamps.items() if ts > 0]
+        played_games.sort(key=lambda x: x[1], reverse=True)
+        
+        if recently_played_count:
+            played_games = played_games[:recently_played_count]
+        
+        recently_played_ids = [appid for appid, _ in played_games]
+        
+        # Disable all games first, then enable only recently played
+        all_game_ids = list(newsids.keys())
+        db.disable_fetching_ids(all_game_ids)
+        db.enable_fetching_ids(recently_played_ids)
+        
+        logger.info('Enabled %d recently played games for news fetching.', len(recently_played_ids))
+    elif not recently_played:
+        # Enable all games
+        db.enable_fetching_ids(list(newsids.keys()))
 
 
 def resolveVanityURL(vanity_url, api_key):
@@ -108,19 +129,19 @@ def resolveVanityURL(vanity_url, api_key):
         return None
 
 
-def getAppIDsFromAPI(steamid, api_key):
-    """Get owned games using Steam Web API.
+def getAllGamesWithTimestamps(steamid, api_key):
+    """Get all owned games with their last played timestamps using Steam Web API.
     
     Args:
         steamid: 64-bit Steam ID
         api_key: Steam Web API key
     
     Returns:
-        dict: {appid: game_name, ...}
+        tuple: (games dict {appid: name}, timestamps dict {appid: last_played_unix_time})
     """
     url = 'https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key={}&steamid={}&include_appinfo=1&include_played_free_games=1&format=json'.format(
         api_key, steamid)
-    logger.info('Fetching games from Steam API for Steam ID %s...', steamid)
+    logger.info('Fetching all games with timestamps from Steam API for Steam ID %s...', steamid)
     
     try:
         response = urlopen(url)
@@ -128,80 +149,26 @@ def getAppIDsFromAPI(steamid, api_key):
         
         if 'response' not in data or 'games' not in data['response']:
             logger.error('No games found. The profile may be private or the Steam ID may be invalid.')
-            return {}
+            return {}, {}
         
         games = {}
+        timestamps = {}
         for game in data['response']['games']:
             appid = game['appid']
             name = game.get('name', 'Unknown Game')
+            last_played = game.get('rtime_last_played', 0)
             games[appid] = name
+            timestamps[appid] = last_played
         
-        logger.info('Found %d games.', len(games))
-        return games
+        played_count = sum(1 for ts in timestamps.values() if ts > 0)
+        logger.info('Found %d total games (%d with play history).', len(games), played_count)
+        return games, timestamps
     except HTTPError as e:
         logger.error('HTTP Error fetching games: %s %s', e.code, e.reason)
-        return {}
+        return {}, {}
     except Exception as e:
         logger.error('Error fetching games from API: %s', e)
-        return {}
-
-
-def getRecentlyPlayedGamesFromAPI(steamid, api_key, count=None):
-    """Get recently played games using last played timestamp from owned games.
-    
-    Args:
-        steamid: 64-bit Steam ID
-        api_key: Steam Web API key
-        count: Optional limit on number of games to return (None = all games with playtime)
-    
-    Returns:
-        dict: {appid: game_name, ...}
-    """
-    url = 'https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key={}&steamid={}&include_appinfo=1&include_played_free_games=1&format=json'.format(
-        api_key, steamid)
-    
-    count_msg = 'last {} played games'.format(count) if count else 'all played games'
-    logger.info('Fetching recently played games (%s) from Steam API for Steam ID %s...', count_msg, steamid)
-    
-    try:
-        response = urlopen(url)
-        data = json.loads(response.read().decode('utf-8'))
-        
-        if 'response' not in data or 'games' not in data['response']:
-            logger.error('No games found. The profile may be private or the Steam ID may be invalid.')
-            return {}
-        
-        # Filter games that have been played (have rtime_last_played)
-        played_games = [
-            game for game in data['response']['games']
-            if game.get('rtime_last_played', 0) > 0
-        ]
-        
-        if not played_games:
-            logger.warning('No recently played games found.')
-            return {}
-        
-        # Sort by last played time (most recent first)
-        played_games.sort(key=lambda x: x.get('rtime_last_played', 0), reverse=True)
-        
-        # Limit to count if specified
-        if count:
-            played_games = played_games[:count]
-        
-        games = {}
-        for game in played_games:
-            appid = game['appid']
-            name = game.get('name', 'Unknown Game')
-            games[appid] = name
-        
-        logger.info('Found %d recently played games.', len(games))
-        return games
-    except HTTPError as e:
-        logger.error('HTTP Error fetching recently played games: %s %s', e.code, e.reason)
-        return {}
-    except Exception as e:
-        logger.error('Error fetching recently played games from API: %s', e)
-        return {}
+        return {}, {}
 
 
 def getAppIDsFromURL(url):

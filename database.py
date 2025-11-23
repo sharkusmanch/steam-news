@@ -62,7 +62,8 @@ class NewsDatabase:
 CREATE TABLE Games(
     appid INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
-    shouldFetch INTEGER NOT NULL DEFAULT 1);
+    shouldFetch INTEGER NOT NULL DEFAULT 1,
+    last_played INTEGER DEFAULT 0);
 CREATE TABLE ExpireTimes(
     appid INTEGER PRIMARY KEY
         REFERENCES Games(appid) ON DELETE CASCADE ON UPDATE CASCADE,
@@ -95,12 +96,29 @@ CREATE INDEX NewsSourceAppIDIdx ON NewsSources(appid);''')
         self.db.commit()
         logger.info('Created DB tables!')
 
-    def add_games(self, games: dict):
-        """Given a dict of appid: name, populate them in the database."""
+    def add_games(self, games: dict, timestamps: dict = None):
+        """Add or update games in the database.
+        
+        Args:
+            games: dict of {appid: name}
+            timestamps: optional dict of {appid: last_played_timestamp}
+        """
         with self.db as db:
-            cur = db.executemany('INSERT OR IGNORE INTO Games VALUES (?, ?, 1)',
-                    games.items())
-            logger.info('Added %d new games to be fetched.', cur.rowcount)
+            if timestamps:
+                # Update or insert with timestamps
+                data = [(appid, name, timestamps.get(appid, 0)) for appid, name in games.items()]
+                db.executemany('''
+                    INSERT INTO Games (appid, name, last_played) VALUES (?, ?, ?)
+                    ON CONFLICT(appid) DO UPDATE SET
+                        name=excluded.name,
+                        last_played=excluded.last_played
+                    ''', data)
+                logger.info('Added/updated %d games with play timestamps.', len(data))
+            else:
+                # Legacy mode: just insert or ignore
+                cur = db.executemany('INSERT OR IGNORE INTO Games VALUES (?, ?, 1, 0)',
+                        games.items())
+                logger.info('Added %d new games to be fetched.', cur.rowcount)
 
     def get_games_like(self, name: str):
         #Since you can't do '%?%' in the SQL, do that here instead
@@ -126,6 +144,30 @@ CREATE INDEX NewsSourceAppIDIdx ON NewsSources(appid);''')
 
     def get_fetch_games(self):
         c = self.db.execute('SELECT appid, name FROM Games WHERE shouldFetch != 0')
+        return dict(c.fetchall())
+
+    def get_recently_played_games(self, count=None):
+        """Get recently played games from database, sorted by last_played timestamp.
+        
+        Args:
+            count: Optional limit on number of games to return
+        
+        Returns:
+            dict: {appid: name} for recently played games
+        """
+        if count:
+            c = self.db.execute('''
+                SELECT appid, name FROM Games 
+                WHERE shouldFetch != 0 AND last_played > 0
+                ORDER BY last_played DESC
+                LIMIT ?
+            ''', (count,))
+        else:
+            c = self.db.execute('''
+                SELECT appid, name FROM Games 
+                WHERE shouldFetch != 0 AND last_played > 0
+                ORDER BY last_played DESC
+            ''')
         return dict(c.fetchall())
 
     def get_all_game_ids(self):
