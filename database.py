@@ -16,6 +16,11 @@ class NewsDatabase:
     def open(self):
         if not self.db:
             logger.debug('Opening DB @ %s', self.path)
+            # Ensure the directory exists
+            db_dir = os.path.dirname(self.path)
+            if db_dir and not os.path.exists(db_dir):
+                os.makedirs(db_dir, exist_ok=True)
+                logger.debug('Created directory: %s', db_dir)
             self.db = sqlite3.connect(self.path)
             self.db.row_factory = sqlite3.Row
             self.db.execute('PRAGMA foreign_keys = ON')
