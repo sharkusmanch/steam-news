@@ -39,14 +39,16 @@ to create the database & seed it with a games list from a **public** Steam profi
 
 ### News Source Methods
 
+**Important:** The application **always imports your entire Steam library** into the database with play timestamps. The mode you choose only affects **which games are enabled** for news fetching, not which games are stored.
+
 You can choose between two methods for determining which games to fetch news for:
 
-1. **All Owned Games** (default): Fetches news for all games in your Steam library
+1. **All Owned Games** (default): Enables news fetching for all games in your Steam library
    ```bash
    ./SteamNews.py --add-profile-games <Steam ID/vanity URL>
    ```
 
-2. **Recently Played Games**: Fetches news only for recently played games (requires Steam API key)
+2. **Recently Played Games**: Enables news fetching only for recently played games (requires Steam API key for timestamp data)
    
    - **All games you've ever played** (default when using `--recently-played`):
      ```bash
@@ -64,9 +66,18 @@ You can choose between two methods for determining which games to fetch news for
      ./SteamNews.py --add-profile-games <Steam ID> --recently-played
      ```
 
+#### How It Works
+
+When you run `--add-profile-games`:
+1. **All your owned games are imported** to the database with their names and last played timestamps
+2. The selected mode determines which games have `shouldFetch` enabled
+3. Future updates refresh the entire game list and timestamps, keeping your database in sync with your Steam library
+
+This means you can switch between modes without re-importing your library - the data is already there.
+
 #### Switching Between Methods
 
-By default, adding games is **additive** - new games are added to the existing list. If you want to switch from "all games" to "recently played" (or vice versa), use the `--replace` flag to disable all existing games first:
+You can switch between "all games" and "recently played" modes at any time. Use the `--replace` flag to disable all existing games before enabling the new set:
 
 ```bash
 # Switch from all games to recently played (last 10 games)
@@ -76,7 +87,7 @@ By default, adding games is **additive** - new games are added to the existing l
 ./SteamNews.py --add-profile-games <Steam ID> --replace
 ```
 
-Without `--replace`, games are simply added to the existing list, which is useful for combining games from multiple profiles.
+Without `--replace`, the command enables the selected games while keeping previously enabled games active, which is useful for combining games from multiple profiles or adding to your current selection.
 
 You can re-run with `-a`/`--add-profile-games` to combine or update from other
 profiles, if you like.

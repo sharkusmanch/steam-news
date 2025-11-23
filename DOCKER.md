@@ -17,6 +17,10 @@ The script now supports using the Steam Web API, which works with private profil
 
 ### First-time Setup
 
+The application always imports your entire Steam library with play timestamps. You can choose to enable all games or only recently played games for news fetching.
+
+#### Import All Owned Games (Enable All)
+
 ```bash
 # Using Steam ID (64-bit numerical ID)
 docker run -v $(pwd)/data:/data \
@@ -28,6 +32,18 @@ docker run -v $(pwd)/data:/data \
   -e STEAM_NEWS_API_KEY=YOUR_API_KEY_HERE \
   steam-news python SteamNews.py --first-run --add-profile-games sharkusmanchez --api-key $STEAM_NEWS_API_KEY
 ```
+
+#### Import All Owned Games (Enable Only Recently Played)
+
+```bash
+# Enable last 10 played games only
+docker run -v $(pwd)/data:/data \
+  -e STEAM_NEWS_API_KEY=YOUR_API_KEY_HERE \
+  steam-news python SteamNews.py --first-run --add-profile-games YOUR_STEAM_ID \
+    --recently-played --recently-played-count 10 --api-key $STEAM_NEWS_API_KEY
+```
+
+**Note:** Your entire library is always stored in the database with timestamps. Running `--add-profile-games` again will update all game data and timestamps. Use `--replace` to change which games are enabled for news fetching.
 
 ### Fetch News and Generate RSS
 
