@@ -1,6 +1,12 @@
 # Use Python 3.11 slim image as base
 FROM python:3.11-slim
 
+# Build arguments
+ARG VERSION=dev
+
+# Labels
+LABEL org.opencontainers.image.version="${VERSION}"
+
 # Set working directory
 WORKDIR /app
 
