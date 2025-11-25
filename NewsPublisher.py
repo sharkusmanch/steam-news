@@ -10,6 +10,32 @@ import bbcode
 
 from database import NewsDatabase
 
+# Optional language detection - only imported if language filtering is enabled
+_langdetect = None
+
+def _get_langdetect():
+    """Lazy import of langdetect to avoid startup cost when not used."""
+    global _langdetect
+    if _langdetect is None:
+        try:
+            from langdetect import detect, LangDetectException
+            _langdetect = (detect, LangDetectException)
+        except ImportError:
+            raise ImportError(
+                'langdetect is required for language filtering. '
+                'Install it with: pip install langdetect'
+            )
+    return _langdetect
+
+
+def detect_language(text):
+    """Detect language of text. Returns ISO 639-1 code (e.g., 'en', 'de', 'ru')."""
+    detect, LangDetectException = _get_langdetect()
+    try:
+        return detect(text)
+    except LangDetectException:
+        return None
+
 # Generate RSS, see:
 # https://cyber.harvard.edu/rss/rss.html
 # https://docs.python.org/3.5/library/datetime.html
@@ -189,17 +215,50 @@ def render_dynlink(tag_name, value, options, parent, context):
     except (KeyError, ValueError):
         return ''
 
-def publish(db: NewsDatabase, output_path=None):
+def publish(db: NewsDatabase, output_path=None, language=None):
+    """Generate and write RSS feed.
+
+    Args:
+        db: NewsDatabase instance
+        output_path: Path to write RSS XML file (default: steam_news.xml)
+        language: ISO 639-1 language code to filter by (e.g., 'en').
+                  If None, no language filtering is applied.
+    """
     if not output_path:
         output_path = 'steam_news.xml'
     logger.info('Generating RSS feed...')
+
+    rows = db.get_news_rows()
+
+    # Apply language filter if specified
+    if language:
+        logger.info('Filtering for language: %s', language)
+        filtered_rows = []
+        filtered_count = 0
+        for row in rows:
+            # Use title + first part of content for better detection accuracy
+            sample_text = row['title']
+            if row['contents']:
+                # Add some content for better detection, but not too much
+                sample_text += ' ' + row['contents'][:500]
+
+            detected = detect_language(sample_text)
+            if detected == language:
+                filtered_rows.append(row)
+            else:
+                filtered_count += 1
+                logger.debug('Filtered out (%s): %s', detected, row['title'][:60])
+
+        logger.info('Filtered out %d articles not in %s', filtered_count, language)
+        rows = filtered_rows
+
     row_func = partial(rowToRSSItem, db=db)
-    rssitems = list(map(row_func, db.get_news_rows()))
+    rssitems = list(map(row_func, rows))
     feed = genRSSFeed(rssitems)
     logger.info('Writing to %s...', output_path)
-    with open(output_path, 'w') as f:
+    with open(output_path, 'w', encoding='utf-8') as f:
         feed.write_xml(f, 'utf-8')
-    logger.info('Published!')
+    logger.info('Published %d items!', len(rssitems))
 
 if __name__ == '__main__':
     import sys

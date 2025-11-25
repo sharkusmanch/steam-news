@@ -412,6 +412,10 @@ def main():
                        help='Number of concurrent workers for fetching (default: 10, or set STEAM_NEWS_WORKERS env var)')
     parser.add_argument('-r', '--retention-days', type=int, metavar='DAYS',
                        help='Number of days to retain news items (default: 14, or set STEAM_NEWS_RETENTION_DAYS env var)')
+    parser.add_argument('-l', '--language', metavar='LANG',
+                       help='Filter articles by language during publish (ISO 639-1 code, e.g., "en"). '
+                            'Requires langdetect: pip install langdetect. '
+                            '(Or set STEAM_NEWS_LANGUAGE env var)')
     parser.add_argument('-v', '--verbose', action='store_true')
     #TODO maybe arg for DB path...?
     args = parser.parse_args()
@@ -438,6 +442,11 @@ def main():
         if env_count:
             recently_played_count = int(env_count)
 
+    # Get language filter from CLI arg or env var
+    language = args.language
+    if language is None:
+        language = os.environ.get('STEAM_NEWS_LANGUAGE')
+
     with NewsDatabase(retention_days=retention_days) as db:
         if args.first_run:
             db.first_run()
@@ -461,7 +470,7 @@ def main():
                 db.prune_old_news()
 
             if args.publish:
-                publish(db, args.publish)
+                publish(db, args.publish, language=language)
 
 if __name__ == '__main__':
     main()

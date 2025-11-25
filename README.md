@@ -25,6 +25,7 @@ The application can be configured via command-line flags or environment variable
 | Retention Days | `-r DAYS`, `--retention-days DAYS` | `STEAM_NEWS_RETENTION_DAYS` | 14 | Number of days to retain news items. Older items are ignored when fetching and pruned from the database |
 | Workers | `-w N`, `--workers N` | `STEAM_NEWS_WORKERS` | 10 | Number of concurrent workers for fetching news |
 | Recently Played Count | `--recently-played-count N` | `STEAM_NEWS_RECENTLY_PLAYED_COUNT` | None | Limit recently played games to last N games played (only applies with `--recently-played`) |
+| Language Filter | `-l LANG`, `--language LANG` | `STEAM_NEWS_LANGUAGE` | None | Filter articles by language when publishing (ISO 639-1 code, e.g., `en`) |
 | Verbose Logging | `-v`, `--verbose` | N/A | False | Enable debug-level logging output |
 
 **Note:** CLI flags take precedence over environment variables when both are provided.
@@ -119,6 +120,27 @@ You can also manually prune old items without fetching using `--prune`:
 
 Finally, you can run `-p`/`--publish` followed by a path to an XML file to output
 to convert the newest news items into an RSS feed.
+
+### Language Filtering
+
+Steam's news API doesn't provide language metadata, but you can filter articles by detected language when publishing. This requires the `langdetect` library:
+
+```bash
+pip install langdetect
+```
+
+Filter to English articles only:
+```bash
+./SteamNews.py --fetch --publish steam_news.xml --language en
+
+# Or with environment variable:
+export STEAM_NEWS_LANGUAGE=en
+./SteamNews.py --fetch --publish steam_news.xml
+```
+
+Common language codes: `en` (English), `de` (German), `ru` (Russian), `fr` (French), `es` (Spanish), `ja` (Japanese), `zh-cn` (Chinese).
+
+**Note:** Language detection uses the article title and first 500 characters of content. Short titles with game names may occasionally be misclassified. Use `-v`/`--verbose` to see which articles are filtered out and their detected languages.
 
 `updateAndPublish.sh` is a sample Bash script to fetch, publish,
 and copy the result where it will be published.
