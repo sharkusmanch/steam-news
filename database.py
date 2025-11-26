@@ -274,11 +274,12 @@ CREATE UNIQUE INDEX NewsTitleIdx ON NewsItems(title);''')
             cur = db.execute('''DELETE FROM NewsItems
                 WHERE date < strftime('%s', 'now', '-{} day')'''.format(self.retention_days))
             deleted = cur.rowcount
-            if deleted > 0:
-                logger.info('Pruned %d old news items (older than %d days).', deleted, self.retention_days)
-                # Reclaim disk space and update statistics after deletion
-                logger.debug('Running VACUUM to reclaim disk space...')
-                db.execute('VACUUM')
-                logger.debug('Running ANALYZE to update query statistics...')
-                db.execute('ANALYZE')
-            return deleted
+
+        if deleted > 0:
+            logger.info('Pruned %d old news items (older than %d days).', deleted, self.retention_days)
+            # VACUUM and ANALYZE must run outside a transaction
+            logger.debug('Running VACUUM to reclaim disk space...')
+            self.db.execute('VACUUM')
+            logger.debug('Running ANALYZE to update query statistics...')
+            self.db.execute('ANALYZE')
+        return deleted

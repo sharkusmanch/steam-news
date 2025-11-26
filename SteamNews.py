@@ -4,7 +4,7 @@
 # https://bendodson.com/weblog/2016/05/17/fetching-rss-feeds-for-steam-game-updates/
 # http://www.getoffmalawn.com/blog/rss-feeds-for-steam-games
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
