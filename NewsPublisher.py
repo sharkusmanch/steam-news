@@ -1,14 +1,30 @@
 #!/usr/bin/env python3
 
+import html
 import logging
 from datetime import datetime, timezone
 import difflib
 from functools import partial
+from urllib.parse import urlparse
 
 import PyRSS2Gen
 import bbcode
 
 from database import NewsDatabase
+
+
+def is_safe_url(url):
+    """Validate that a URL uses a safe scheme (http/https only).
+
+    This prevents XSS attacks via javascript:, data:, or other dangerous schemes.
+    """
+    if not url:
+        return False
+    try:
+        parsed = urlparse(url)
+        return parsed.scheme in ('http', 'https', '')
+    except Exception:
+        return False
 
 # Optional language detection - only imported if language filtering is enabled
 _langdetect = None
@@ -182,12 +198,15 @@ IMG_REPLACEMENTS = {
 IMG = '<img style="display: inline-block; max-width: 100%;" src="{}" />'
 
 def render_img(tag_name, value, options, parent, context):
-    src = value or options['src']
+    src = value or options.get('src', '')
     if not src:
         return ''
     for mark, replaced in IMG_REPLACEMENTS.items():
         src = src.replace(mark, replaced)
-    return IMG.format(src)
+    # Validate URL scheme to prevent XSS via javascript: or data: URLs
+    if not is_safe_url(src):
+        return ''
+    return IMG.format(html.escape(src, quote=True))
 
 
 YT_TAG = '<a rel="nofollow" href="https://www.youtube.com/watch?v={0}">https://www.youtube.com/watch?v={0}</a>'
@@ -199,11 +218,12 @@ def render_yt(tag_name, value, options, parent, context):
     # I'd rather have the choice to click on them, so just make them regular links
     try:
         # grab everything between the '=' (options dict) and the ';'
-        # TODO is there always a ;full component?
         yt_id = options['previewyoutube'][:options['previewyoutube'].index(';')]
-        return YT_TAG.format(yt_id)
+        # Sanitize the YouTube ID to prevent XSS (alphanumeric, dash, underscore only)
+        if not yt_id or not all(c.isalnum() or c in '-_' for c in yt_id):
+            return ''
+        return YT_TAG.format(html.escape(yt_id, quote=True))
     except (KeyError, ValueError):
-        # TODO uhh... look at https://dcwatson.github.io/bbcode/formatters/ again
         return ''
 
 def render_dynlink(tag_name, value, options, parent, context):
@@ -211,7 +231,11 @@ def render_dynlink(tag_name, value, options, parent, context):
     # should output just a regular ol <a>
     try:
         url = options['href']
-        return f'<a rel="nofollow" href="{url}">{url}</a>'
+        # Validate URL scheme to prevent XSS via javascript: or data: URLs
+        if not is_safe_url(url):
+            return ''
+        escaped_url = html.escape(url, quote=True)
+        return f'<a rel="nofollow" href="{escaped_url}">{escaped_url}</a>'
     except (KeyError, ValueError):
         return ''
 

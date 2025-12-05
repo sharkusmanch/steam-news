@@ -5,8 +5,11 @@ import time
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_RETENTION_DAYS = 14
+
+
 class NewsDatabase:
-    def __init__(self, path=None, retention_days=14):
+    def __init__(self, path=None, retention_days=DEFAULT_RETENTION_DAYS):
         if path is None:
             path = os.environ.get('STEAM_NEWS_DATABASE_PATH', 'SteamNews.db')
         self.path = path
@@ -253,12 +256,11 @@ CREATE UNIQUE INDEX NewsTitleIdx ON NewsItems(title);''')
                     (existing_gid, ned['realappid']))
 
     def get_news_rows(self):
-        #TODO generator shenanigans instead of fetchall()?
         #sadly our sqlite3 version isn't new enough for unixepoch()
         # so we have to use strftime('%s') for sqlite to make a unix timestamp
         c = self.db.execute('''SELECT * FROM NewsItems
-            WHERE date >= strftime('%s', 'now', '-{} day')
-            ORDER BY date DESC'''.format(self.retention_days))
+            WHERE date >= strftime('%s', 'now', '-' || ? || ' day')
+            ORDER BY date DESC''', (self.retention_days,))
         return c.fetchall()
 
     def get_source_names_for_item(self, gid):
@@ -272,7 +274,7 @@ CREATE UNIQUE INDEX NewsTitleIdx ON NewsItems(title);''')
         """Remove news items older than retention_days from the database."""
         with self.db as db:
             cur = db.execute('''DELETE FROM NewsItems
-                WHERE date < strftime('%s', 'now', '-{} day')'''.format(self.retention_days))
+                WHERE date < strftime('%s', 'now', '-' || ? || ' day')''', (self.retention_days,))
             deleted = cur.rowcount
 
         if deleted > 0:

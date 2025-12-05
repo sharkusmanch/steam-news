@@ -18,12 +18,19 @@ import threading
 import time
 from urllib.request import urlopen
 from urllib.error import HTTPError
-import xml.dom.minidom  # Maybe replace this one...
+
+import defusedxml.minidom as minidom
 
 from database import NewsDatabase
 from NewsPublisher import publish
 
 logger = logging.getLogger(__name__)
+
+# Configuration defaults
+DEFAULT_REQUEST_TIMEOUT = 30  # seconds
+DEFAULT_WORKERS = 10
+DEFAULT_RETENTION_DAYS = 14
+DEFAULT_NEWS_COUNT = 10  # number of news items to fetch per game
 
 # Hardcoded list of AppIDs that return news related to Steam as a whole (not games)
 # Mileage may vary. Use app_id_discovery.py to maybe find more of these...
@@ -119,7 +126,7 @@ def resolveVanityURL(vanity_url, api_key):
     url = 'https://api.steampowered.com/ISteamUser/ResolveVanityURL/v0001/?key={}&vanityurl={}'.format(
         api_key, vanity_url)
     try:
-        response = urlopen(url)
+        response = urlopen(url, timeout=DEFAULT_REQUEST_TIMEOUT)
         data = json.loads(response.read().decode('utf-8'))
         if data['response']['success'] == 1:
             logger.info('Resolved vanity URL "%s" to Steam ID %s', vanity_url, data['response']['steamid'])
@@ -133,20 +140,20 @@ def resolveVanityURL(vanity_url, api_key):
 
 def getAllGamesWithTimestamps(steamid, api_key):
     """Get all owned games with their last played timestamps using Steam Web API.
-    
+
     Args:
         steamid: 64-bit Steam ID
         api_key: Steam Web API key
-    
+
     Returns:
         tuple: (games dict {appid: name}, timestamps dict {appid: last_played_unix_time})
     """
     url = 'https://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key={}&steamid={}&include_appinfo=1&include_played_free_games=1&format=json'.format(
         api_key, steamid)
     logger.info('Fetching all games with timestamps from Steam API for Steam ID %s...', steamid)
-    
+
     try:
-        response = urlopen(url)
+        response = urlopen(url, timeout=DEFAULT_REQUEST_TIMEOUT)
         data = json.loads(response.read().decode('utf-8'))
         
         if 'response' not in data or 'games' not in data['response']:
@@ -180,14 +187,15 @@ def getAppIDsFromURL(url):
     Note that the profile in question needs to be public for this to work!"""
     logger.info('Parsing XML from %s...', url)
     try:
-        xmlstr = urlopen(url).read().decode('utf-8')
-        
+        xmlstr = urlopen(url, timeout=DEFAULT_REQUEST_TIMEOUT).read().decode('utf-8')
+
         # Check if we got redirected to a login page
         if 'login' in xmlstr.lower() or '<html' in xmlstr.lower():
             logger.error('Profile is private or requires login. Please make your game details public or use --api-key.')
             return {}
-        
-        dom = xml.dom.minidom.parseString(xmlstr)
+
+        # Use defusedxml to prevent XXE attacks
+        dom = minidom.parseString(xmlstr)
         gameEls = dom.getElementsByTagName('game')
 
         games = {}
@@ -198,12 +206,9 @@ def getAppIDsFromURL(url):
 
         logger.info('Found %d games.', len(games))
         return games
-    except xml.parsers.expat.ExpatError as e:
-        logger.error('XML parsing error: %s. Profile may be private or invalid.', e)
-        logger.error('Please make your game details public or use --api-key option with STEAM_NEWS_API_KEY environment variable.')
-        return {}
     except Exception as e:
         logger.error('Error fetching games from profile: %s', e)
+        logger.error('Please make your game details public or use --api-key option with STEAM_NEWS_API_KEY environment variable.')
         return {}
 
 # Date/time manipulation
@@ -229,9 +234,10 @@ def parseExpiresAsDT(exp):
 
 def getNewsForAppID(appid):
     """Get news for the given appid as a dict"""
-    url = 'https://api.steampowered.com/ISteamNews/GetNewsForApp/v0002/?format=json&maxlength=0&count=10&appid={}'.format(appid)
+    url = 'https://api.steampowered.com/ISteamNews/GetNewsForApp/v0002/?format=json&maxlength=0&count={}&appid={}'.format(
+        DEFAULT_NEWS_COUNT, appid)
     try:
-        response = urlopen(url)
+        response = urlopen(url, timeout=DEFAULT_REQUEST_TIMEOUT)
         # Get value of 'expires' header as a datetime obj
         exdt = getExpiresDTFromResponse(response)
         # Parse the JSON
@@ -247,14 +253,14 @@ def getNewsForAppID(appid):
         return {'error': '{} {}'.format(e.code, e.reason)}
 
 
-def isNewsOld(ned, retention_days=14):
+def isNewsOld(ned, retention_days=DEFAULT_RETENTION_DAYS):
     """Is this news item older than retention_days?"""
     newsdt = datetime.fromtimestamp(ned['date'], timezone.utc)
     cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
     return newsdt < cutoff
 
 
-def saveRecentNews(news: dict, db: NewsDatabase, retention_days=14):
+def saveRecentNews(news: dict, db: NewsDatabase, retention_days=DEFAULT_RETENTION_DAYS):
     """Given a single news dict from getNewsForAppID,
     save all "recent" news items to the DB"""
     db.update_expire_time(news['appnews']['appid'], news['expires'])
@@ -267,13 +273,13 @@ def saveRecentNews(news: dict, db: NewsDatabase, retention_days=14):
     return current_entries
 
 
-def getAllRecentNews(newsids: dict, db: NewsDatabase, max_workers=10):
+def getAllRecentNews(newsids: dict, db: NewsDatabase, max_workers=DEFAULT_WORKERS):
     """Given a dict of appids to names, store all "recent" items, respecting the cache.
-    
+
     Args:
         newsids: dict of {appid: game_name}
         db: NewsDatabase instance
-        max_workers: Maximum number of concurrent requests (default: 10)
+        max_workers: Maximum number of concurrent requests
     """
     total_current = 0
     cachehits = 0
@@ -412,9 +418,9 @@ def main():
                        help='Prune news items older than retention period from database')
     parser.add_argument('-g', '--edit-games-like', metavar='partial title')
     parser.add_argument('-w', '--workers', type=int, metavar='N',
-                       help='Number of concurrent workers for fetching (default: 10, or set STEAM_NEWS_WORKERS env var)')
+                       help=f'Number of concurrent workers for fetching (default: {DEFAULT_WORKERS}, or set STEAM_NEWS_WORKERS env var)')
     parser.add_argument('-r', '--retention-days', type=int, metavar='DAYS',
-                       help='Number of days to retain news items (default: 14, or set STEAM_NEWS_RETENTION_DAYS env var)')
+                       help=f'Number of days to retain news items (default: {DEFAULT_RETENTION_DAYS}, or set STEAM_NEWS_RETENTION_DAYS env var)')
     parser.add_argument('-l', '--language', metavar='LANG',
                        help='Filter articles by language during publish (ISO 639-1 code, e.g., "en"). '
                             'Requires langdetect: pip install langdetect. '
@@ -431,12 +437,12 @@ def main():
     # Get retention days from CLI arg, env var, or default
     retention_days = args.retention_days
     if retention_days is None:
-        retention_days = int(os.environ.get('STEAM_NEWS_RETENTION_DAYS', 14))
+        retention_days = int(os.environ.get('STEAM_NEWS_RETENTION_DAYS', DEFAULT_RETENTION_DAYS))
 
     # Get workers from CLI arg, env var, or default
     workers = args.workers
     if workers is None:
-        workers = int(os.environ.get('STEAM_NEWS_WORKERS', 10))
+        workers = int(os.environ.get('STEAM_NEWS_WORKERS', DEFAULT_WORKERS))
 
     # Get recently played count from CLI arg or env var
     recently_played_count = args.recently_played_count

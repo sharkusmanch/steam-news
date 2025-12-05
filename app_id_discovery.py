@@ -6,10 +6,12 @@ from urllib.error import HTTPError
 import json
 
 APPLIST_URL = 'https://api.steampowered.com/ISteamApps/GetAppList/v0002/'
+DEFAULT_REQUEST_TIMEOUT = 60  # seconds (app list is large)
+
 
 def capture_and_save():
     try:
-        applist_resp = urlopen(APPLIST_URL)
+        applist_resp = urlopen(APPLIST_URL, timeout=DEFAULT_REQUEST_TIMEOUT)
         applist = json.loads(applist_resp.read().decode('utf-8'))
         del applist_resp #probably unnecessary memory saving
     except HTTPError as e:
