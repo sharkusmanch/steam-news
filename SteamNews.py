@@ -419,6 +419,8 @@ def main():
                        help='Filter articles by language during publish (ISO 639-1 code, e.g., "en"). '
                             'Requires langdetect: pip install langdetect. '
                             '(Or set STEAM_NEWS_LANGUAGE env var)')
+    parser.add_argument('--list-sources', action='store_true',
+                       help='List distinct news sources (feedlabels) in the database and exit')
     parser.add_argument('-v', '--verbose', action='store_true')
     #TODO maybe arg for DB path...?
     args = parser.parse_args()
@@ -451,6 +453,18 @@ def main():
         language = os.environ.get('STEAM_NEWS_LANGUAGE')
 
     with NewsDatabase(retention_days=retention_days) as db:
+        if args.list_sources:
+            sources = db.get_distinct_sources()
+            if not sources:
+                print('No news sources found. Run --fetch first.')
+            else:
+                print('{:<40s} {}'.format('Source', 'Feed Name'))
+                print('-' * 60)
+                for feedlabel, feedname in sources:
+                    label = feedlabel or '(none - uses feedname)'
+                    print('{:<40s} {}'.format(label, feedname or ''))
+            sys.exit(0)
+
         if args.first_run:
             db.first_run()
 
