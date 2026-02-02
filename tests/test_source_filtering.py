@@ -1,6 +1,10 @@
+import os
 import sqlite3
+from unittest.mock import patch
+
 import pytest
 from database import NewsDatabase
+from SteamNews import main
 
 
 @pytest.fixture
@@ -129,3 +133,53 @@ def test_filter_is_case_insensitive():
     ]
     result = filter_rows_by_source(rows, exclude_sources=['rock, paper, shotgun'])
     assert [r['gid'] for r in result] == ['2']
+
+
+import time
+from NewsPublisher import publish
+
+
+@pytest.fixture
+def populated_db(db, tmp_path):
+    """The db fixture already has data. Update dates to be recent so get_news_rows returns them."""
+    now = int(time.time())
+    db.db.execute("UPDATE NewsItems SET date = ?", (now,))
+    db.db.commit()
+    db.retention_days = 30
+    return db
+
+
+def test_publish_with_exclude_source(populated_db, tmp_path):
+    output = str(tmp_path / 'out.xml')
+    publish(populated_db, output_path=output, exclude_sources=['Rock, Paper, Shotgun'])
+    with open(output) as f:
+        content = f.read()
+    # Titles 1 and 4 are from RPS, should be excluded
+    assert 'Title 1' not in content
+    assert 'Title 4' not in content
+    # Others should be present
+    assert 'Title 2' in content
+    assert 'Title 3' in content
+
+
+def test_publish_with_include_source(populated_db, tmp_path):
+    output = str(tmp_path / 'out.xml')
+    publish(populated_db, output_path=output, include_sources=['PC Gamer'])
+    with open(output) as f:
+        content = f.read()
+    assert 'Title 2' in content
+    assert 'Title 1' not in content
+    assert 'Title 3' not in content
+
+
+def test_list_sources_cli(populated_db, capsys):
+    with patch('SteamNews.NewsDatabase') as MockDB:
+        MockDB.return_value.__enter__ = lambda s: populated_db
+        MockDB.return_value.__exit__ = lambda s, *a: populated_db.close(optimize=False)
+        with pytest.raises(SystemExit) as exc_info:
+            with patch('sys.argv', ['SteamNews.py', '--list-sources']):
+                main()
+        assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert 'Rock, Paper, Shotgun' in captured.out
+    assert 'PC Gamer' in captured.out

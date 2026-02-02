@@ -245,7 +245,7 @@ def filter_rows_by_source(rows, include_sources=None, exclude_sources=None):
     return list(rows)
 
 
-def publish(db: NewsDatabase, output_path=None, language=None):
+def publish(db: NewsDatabase, output_path=None, language=None, include_sources=None, exclude_sources=None):
     """Generate and write RSS feed.
 
     Args:
@@ -253,12 +253,22 @@ def publish(db: NewsDatabase, output_path=None, language=None):
         output_path: Path to write RSS XML file (default: steam_news.xml)
         language: ISO 639-1 language code to filter by (e.g., 'en').
                   If None, no language filtering is applied.
+        include_sources: List of source names to include (case-insensitive).
+                         If set, only articles from these sources are published.
+        exclude_sources: List of source names to exclude (case-insensitive).
+                         If set, articles from these sources are removed.
     """
     if not output_path:
         output_path = 'steam_news.xml'
     logger.info('Generating RSS feed...')
 
     rows = db.get_news_rows()
+
+    # Apply source filter
+    if include_sources or exclude_sources:
+        before = len(rows)
+        rows = filter_rows_by_source(rows, include_sources=include_sources, exclude_sources=exclude_sources)
+        logger.info('Source filter: %d -> %d articles', before, len(rows))
 
     # Apply language filter if specified
     if language:
