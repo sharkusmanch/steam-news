@@ -2,10 +2,17 @@
 FROM python:3.14-slim
 
 # Build arguments
+ARG BUILD_DATE
+ARG VCS_REF
 ARG VERSION=dev
 
 # Labels
-LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.source="https://github.com/sharkusmanch/steam-news" \
+      org.opencontainers.image.title="steam-news" \
+      org.opencontainers.image.description="Steam game news RSS feed aggregator"
 
 # Set working directory
 WORKDIR /app
