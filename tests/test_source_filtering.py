@@ -183,3 +183,55 @@ def test_list_sources_cli(populated_db, capsys):
     captured = capsys.readouterr()
     assert 'Rock, Paper, Shotgun' in captured.out
     assert 'PC Gamer' in captured.out
+
+
+def test_exclude_source_cli_flag(populated_db, tmp_path):
+    output = str(tmp_path / 'out.xml')
+    with patch('SteamNews.NewsDatabase') as MockDB:
+        MockDB.return_value.__enter__ = lambda s: populated_db
+        MockDB.return_value.__exit__ = lambda s, *a: populated_db.close(optimize=False)
+        with patch('sys.argv', ['SteamNews.py', '--publish', output,
+                                '--exclude-source', 'Rock, Paper, Shotgun']):
+            main()
+    with open(output) as f:
+        content = f.read()
+    assert 'Title 1' not in content
+    assert 'Title 2' in content
+
+
+def test_include_and_exclude_are_mutually_exclusive():
+    with pytest.raises(SystemExit) as exc_info:
+        with patch('sys.argv', ['SteamNews.py',
+                                '--include-source', 'Foo',
+                                '--exclude-source', 'Bar']):
+            main()
+    assert exc_info.value.code != 0
+
+
+def test_exclude_source_env_var(populated_db, tmp_path):
+    output = str(tmp_path / 'out.xml')
+    with patch('SteamNews.NewsDatabase') as MockDB:
+        MockDB.return_value.__enter__ = lambda s: populated_db
+        MockDB.return_value.__exit__ = lambda s, *a: populated_db.close(optimize=False)
+        with patch.dict(os.environ, {'STEAM_NEWS_EXCLUDE_SOURCES': 'Rock, Paper, Shotgun|PC Gamer'}):
+            with patch('sys.argv', ['SteamNews.py', '--publish', output]):
+                main()
+    with open(output) as f:
+        content = f.read()
+    assert 'Title 1' not in content
+    assert 'Title 2' not in content
+    assert 'Title 3' in content
+
+
+def test_include_source_env_var(populated_db, tmp_path):
+    output = str(tmp_path / 'out.xml')
+    with patch('SteamNews.NewsDatabase') as MockDB:
+        MockDB.return_value.__enter__ = lambda s: populated_db
+        MockDB.return_value.__exit__ = lambda s, *a: populated_db.close(optimize=False)
+        with patch.dict(os.environ, {'STEAM_NEWS_INCLUDE_SOURCES': 'PC Gamer'}):
+            with patch('sys.argv', ['SteamNews.py', '--publish', output]):
+                main()
+    with open(output) as f:
+        content = f.read()
+    assert 'Title 2' in content
+    assert 'Title 1' not in content

@@ -421,6 +421,17 @@ def main():
                             '(Or set STEAM_NEWS_LANGUAGE env var)')
     parser.add_argument('--list-sources', action='store_true',
                        help='List distinct news sources (feedlabels) in the database and exit')
+    source_group = parser.add_mutually_exclusive_group()
+    source_group.add_argument('--include-source', action='append', metavar='SOURCE',
+                             dest='include_sources',
+                             help='Only include articles from this source (repeatable). '
+                                  'Mutually exclusive with --exclude-source. '
+                                  '(Or set STEAM_NEWS_INCLUDE_SOURCES env var, pipe-delimited)')
+    source_group.add_argument('--exclude-source', action='append', metavar='SOURCE',
+                             dest='exclude_sources',
+                             help='Exclude articles from this source (repeatable). '
+                                  'Mutually exclusive with --include-source. '
+                                  '(Or set STEAM_NEWS_EXCLUDE_SOURCES env var, pipe-delimited)')
     parser.add_argument('-v', '--verbose', action='store_true')
     #TODO maybe arg for DB path...?
     args = parser.parse_args()
@@ -451,6 +462,17 @@ def main():
     language = args.language
     if language is None:
         language = os.environ.get('STEAM_NEWS_LANGUAGE')
+
+    # Get source filters from CLI args or env vars
+    include_sources = args.include_sources
+    exclude_sources = args.exclude_sources
+    if include_sources is None and exclude_sources is None:
+        env_include = os.environ.get('STEAM_NEWS_INCLUDE_SOURCES')
+        env_exclude = os.environ.get('STEAM_NEWS_EXCLUDE_SOURCES')
+        if env_include:
+            include_sources = [s.strip() for s in env_include.split('|') if s.strip()]
+        elif env_exclude:
+            exclude_sources = [s.strip() for s in env_exclude.split('|') if s.strip()]
 
     with NewsDatabase(retention_days=retention_days) as db:
         if args.list_sources:
@@ -487,7 +509,8 @@ def main():
                 db.prune_old_news()
 
             if args.publish:
-                publish(db, args.publish, language=language)
+                publish(db, args.publish, language=language,
+                        include_sources=include_sources, exclude_sources=exclude_sources)
 
 if __name__ == '__main__':
     main()
