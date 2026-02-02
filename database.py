@@ -268,6 +268,17 @@ CREATE UNIQUE INDEX NewsTitleIdx ON NewsItems(title);''')
         #fetchall gives a bunch of tuples, so we have to unpack them with a for loop...
         return list(x[0] for x in c.fetchall())
 
+    def get_distinct_sources(self):
+        """Get distinct (feedlabel, feedname) pairs from all news items.
+
+        Returns:
+            List of (feedlabel, feedname) tuples, sorted by feedlabel (NULLs last).
+        """
+        c = self.db.execute('''SELECT DISTINCT feedlabel, feedname
+            FROM NewsItems
+            ORDER BY CASE WHEN feedlabel IS NULL THEN 1 ELSE 0 END, feedlabel''')
+        return [tuple(row) for row in c.fetchall()]
+
     def prune_old_news(self):
         """Remove news items older than retention_days from the database."""
         with self.db as db:
