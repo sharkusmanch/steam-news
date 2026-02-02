@@ -55,3 +55,77 @@ def test_get_distinct_sources_includes_null_feedlabel(db):
     sources = db.get_distinct_sources()
     # NULL feedlabel rows should still appear, with None as feedlabel
     assert (None, 'steam_community_blog') in sources
+
+
+from NewsPublisher import filter_rows_by_source
+
+
+def _make_row(gid, feedlabel, feedname):
+    """Helper to create a dict mimicking a sqlite3.Row for filtering."""
+    return {'gid': gid, 'feedlabel': feedlabel, 'feedname': feedname}
+
+
+def test_filter_exclude_source():
+    rows = [
+        _make_row('1', 'Rock, Paper, Shotgun', 'rps'),
+        _make_row('2', 'PC Gamer', 'pcgamer'),
+        _make_row('3', 'Steam Community Announcements', 'steam_community_announcements'),
+    ]
+    result = filter_rows_by_source(rows, exclude_sources=['Rock, Paper, Shotgun'])
+    assert [r['gid'] for r in result] == ['2', '3']
+
+
+def test_filter_include_source():
+    rows = [
+        _make_row('1', 'Rock, Paper, Shotgun', 'rps'),
+        _make_row('2', 'PC Gamer', 'pcgamer'),
+        _make_row('3', 'Steam Community Announcements', 'steam_community_announcements'),
+    ]
+    result = filter_rows_by_source(rows, include_sources=['PC Gamer'])
+    assert [r['gid'] for r in result] == ['2']
+
+
+def test_filter_include_multiple_sources():
+    rows = [
+        _make_row('1', 'Rock, Paper, Shotgun', 'rps'),
+        _make_row('2', 'PC Gamer', 'pcgamer'),
+        _make_row('3', 'Steam Community Announcements', 'steam_community_announcements'),
+    ]
+    result = filter_rows_by_source(rows, include_sources=['PC Gamer', 'Rock, Paper, Shotgun'])
+    assert [r['gid'] for r in result] == ['1', '2']
+
+
+def test_filter_no_sources_returns_all():
+    rows = [
+        _make_row('1', 'Rock, Paper, Shotgun', 'rps'),
+        _make_row('2', 'PC Gamer', 'pcgamer'),
+    ]
+    result = filter_rows_by_source(rows)
+    assert len(result) == 2
+
+
+def test_filter_exclude_null_feedlabel_uses_feedname():
+    rows = [
+        _make_row('1', None, 'steam_community_blog'),
+        _make_row('2', 'PC Gamer', 'pcgamer'),
+    ]
+    result = filter_rows_by_source(rows, exclude_sources=['steam_community_blog'])
+    assert [r['gid'] for r in result] == ['2']
+
+
+def test_filter_include_null_feedlabel_uses_feedname():
+    rows = [
+        _make_row('1', None, 'steam_community_blog'),
+        _make_row('2', 'PC Gamer', 'pcgamer'),
+    ]
+    result = filter_rows_by_source(rows, include_sources=['steam_community_blog'])
+    assert [r['gid'] for r in result] == ['1']
+
+
+def test_filter_is_case_insensitive():
+    rows = [
+        _make_row('1', 'Rock, Paper, Shotgun', 'rps'),
+        _make_row('2', 'PC Gamer', 'pcgamer'),
+    ]
+    result = filter_rows_by_source(rows, exclude_sources=['rock, paper, shotgun'])
+    assert [r['gid'] for r in result] == ['2']

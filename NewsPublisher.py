@@ -215,6 +215,36 @@ def render_dynlink(tag_name, value, options, parent, context):
     except (KeyError, ValueError):
         return ''
 
+def filter_rows_by_source(rows, include_sources=None, exclude_sources=None):
+    """Filter news rows by source (feedlabel).
+
+    Falls back to feedname if feedlabel is NULL. Matching is case-insensitive.
+
+    Args:
+        rows: List of news row dicts/Row objects.
+        include_sources: If set, only include rows matching these sources.
+        exclude_sources: If set, exclude rows matching these sources.
+
+    Returns:
+        Filtered list of rows.
+    """
+    if not include_sources and not exclude_sources:
+        return list(rows)
+
+    def get_source(row):
+        return (row['feedlabel'] or row['feedname'] or '').lower()
+
+    if include_sources:
+        allowed = {s.lower() for s in include_sources}
+        return [r for r in rows if get_source(r) in allowed]
+
+    if exclude_sources:
+        blocked = {s.lower() for s in exclude_sources}
+        return [r for r in rows if get_source(r) not in blocked]
+
+    return list(rows)
+
+
 def publish(db: NewsDatabase, output_path=None, language=None):
     """Generate and write RSS feed.
 
