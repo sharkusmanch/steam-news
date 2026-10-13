@@ -1,5 +1,5 @@
 # Use Python 3.11 slim image as base
-FROM python:3.14-slim
+FROM python:3.15-slim
 
 # Build arguments
 ARG BUILD_DATE
